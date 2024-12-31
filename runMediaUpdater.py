@@ -4,6 +4,7 @@ import threading
 import io
 import time
 import asyncio
+import traceback
 
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
@@ -22,11 +23,6 @@ from winsdk.windows.storage.streams import DataReader, Buffer, InputStreamOption
 ALBUM_ART_KEY_NUMBER = 6
 REFRESH_BUTTON_KEY_NUMBER = 5
 
-async def read_stream_into_buffer(stream_ref, buffer):
-    '''Reads the contents of a WinRT stream type into a buffer'''
-    readable_stream = await stream_ref.open_read_async()
-    readable_stream.read_async(buffer, buffer.capacity, InputStreamOptions.READ_AHEAD)
-
 async def get_media_info():
     '''Polls the WinRT API for the currently playing media info'''
     sessions = await MediaManager.request_async()
@@ -42,6 +38,21 @@ async def get_media_info():
         # converts winrt vector to list
         info_dict['genres'] = list(info_dict['genres'])
 
+        print("Title: " + info_dict['title'])
+
+        # Copy the thumbnail image from the stream reference that is provided by the API
+        thumb_stream_ref = info_dict['thumbnail']
+        thumb_read_buffer = Buffer(5000000)
+        readable_stream = await thumb_stream_ref.open_read_async()
+        readable_stream.read_async(thumb_read_buffer, thumb_read_buffer.capacity, InputStreamOptions.READ_AHEAD)
+        img = Image.new('RGB', (120, 120), color='black')
+        released_icon_from_buffer = Image.open(io.BytesIO(bytearray(thumb_read_buffer))).resize((120, 120))
+        img.paste(released_icon_from_buffer, (0, 0))
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='JPEG')
+        img_released_bytes = img_byte_arr.getvalue()
+        info_dict['thumbnailBytes'] = img_released_bytes
+
         # Deallocate all objects to avoid memory leaks
         del sessions
         del current_session
@@ -51,6 +62,7 @@ async def get_media_info():
 
     info_dict = {}
     info_dict['title'] = ""
+    info_dict['thumbnailBytes'] = None
 
     # Deallocate all objects to avoid memory leaks
     del sessions
@@ -62,7 +74,6 @@ def get_current_media_info():
     '''Gets the current media info'''
     try:
         current_media_info = asyncio.run(get_media_info())
-        print( current_media_info)
         return current_media_info
     except:
         current_media_info = {}
@@ -71,12 +82,15 @@ def get_current_media_info():
 
 def updateCurrentlyPlaying(deck, current_media_info):  
     '''Updates the currently playing media info on the Stream Deck Touchscreen'''
+    title = current_media_info['title']
+    if title == None or title == "":
+        return
+
     with deck:
         try:
             print("Updating currently playing media")
             img = Image.new('RGB', (600, 100), 'black')
             
-            title = current_media_info['title']
             # Strip any non-ASCII characters
             title = ''.join([i if ord(i) < 128 else '' for i in title])
             # Trim the whitespace from beginning and end
@@ -102,72 +116,45 @@ def updateCurrentlyPlaying(deck, current_media_info):
             img.save(img_bytes, format='JPEG')
             touchscreen_image_bytes = img_bytes.getvalue()
 
-            deck.set_touchscreen_image(touchscreen_image_bytes, 200,0,600,100)
-
-            # Deallocate all objects to avoid memory leaks
-            del img
-            del draw
-            del font
-            del img_bytes
-            del touchscreen_image_bytes
-            
+            deck.set_touchscreen_image(touchscreen_image_bytes, 200,0,600,100)            
         except:
             print ("Error updating currently playing media")
+            traceback.print_exc()
 
-
-def updateAlbumArt(deck, current_media_info):
+def updateAlbumArt(deck, media_info):
     '''Updates the album art on the Stream Deck Key 6'''
+    if media_info == None or "thumbnailBytes" not in media_info:
+        return None
+
+    image = media_info['thumbnailBytes']
+    if image == None:
+        return
+
     with deck:
         print("Updating album art")
         try:
-            # Set the key image to the thumbnail of the currently playing media
-            thumb_stream_ref = current_media_info['thumbnail']
-            thumb_read_buffer = Buffer(5000000)
-            asyncio.run(read_stream_into_buffer(thumb_stream_ref, thumb_read_buffer))
-            buffer_reader = DataReader.from_buffer(thumb_read_buffer)
-            byte_buffer = buffer_reader.read_bytes(thumb_read_buffer.length)
-            img = Image.new('RGB', (120, 120), color='black')
-            released_icon_from_buffer = Image.open(io.BytesIO(bytearray(byte_buffer))).resize((120, 120))
-            img.paste(released_icon_from_buffer, (0, 0))
-            img_byte_arr = io.BytesIO()
-            img.save(img_byte_arr, format='JPEG')
-            img_released_bytes = img_byte_arr.getvalue()
-            deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
-
-            # Deallocate all objects to avoid memory leaks
-            del img
-            del thumb_read_buffer
-            del buffer_reader
-            del byte_buffer
-            del img_byte_arr
-            del released_icon_from_buffer
-
-        except:
+            deck.set_key_image(ALBUM_ART_KEY_NUMBER, image)
+            print("Album art updated")
+        except Exception: 
+            traceback.print_exc()
             img = Image.new('RGB', (120, 120), color='black')
             img_byte_arr = io.BytesIO()
             img.save(img_byte_arr, format='JPEG')
             img_released_bytes = img_byte_arr.getvalue()
-            deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
-
-            # Deallocate all objects to avoid memory leaks
-            del img
-            del img_byte_arr
-            del img_released_bytes
-
+            #deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
+            print("Album art not updated")
+        
 def hashAlbumArt(media_info):
     '''Compares two album arts to see if they are the same'''
+    if media_info == None or "thumbnailBytes" not in media_info:
+        return None
+
+    image = media_info['thumbnailBytes']
+    if image == None:
+        return
+
     try:
-        t1Buf = Buffer(5000000)
-        asyncio.run(read_stream_into_buffer(media_info['thumbnail'], t1Buf))
-        t1Reader = DataReader.from_buffer(t1Buf)
-        t1ByteBuf = t1Reader.read_bytes(t1Buf.length)
-        t1ByteArr = bytes(bytearray(t1ByteBuf))
-
-        # Deallocate all objects to avoid memory leaks
-        del t1Buf
-        del t1Reader
-
-        return hash(t1ByteArr)
+        return hash(media_info['thumbnailBytes'])
     except:
         return None
 
@@ -183,24 +170,26 @@ def key_change_callback(deck, key, key_state):
         del current_media_info
 
 def runUpdaterTask(deck):
-    previous_media_info = get_current_media_info()
-    previous_media_info["title"] = None
+    previousTitle = ""
     previousMediaHash = None
     while True:
         time.sleep(0.250)
         current_media_info = get_current_media_info()
-        if current_media_info["title"] != previous_media_info["title"]:
+
+        currentTitle = current_media_info["title"]
+        if previousTitle != currentTitle and currentTitle != None:
+            print("title changed")
+            print("Current: " + currentTitle)
+            print("Previous: " + previousTitle)
             updateCurrentlyPlaying(deck, current_media_info)      
-            previous_media_info = current_media_info
-        if previousMediaHash != hashAlbumArt(current_media_info):
-             print(previous_media_info)
-             print(current_media_info)
+            previousTitle = currentTitle
+        
+        currentMediaHash = hashAlbumArt(current_media_info)
+        if previousMediaHash != currentMediaHash and currentMediaHash != None:
+             print("hash changed")
              updateAlbumArt(deck, current_media_info)
-             previousMediaHash = hashAlbumArt(current_media_info)
-        
-        # Deallocate all objects to avoid memory leaks
-        del current_media_info
-        
+             previousMediaHash = currentMediaHash
+                
 if __name__ == "__main__":
     while True:
         streamdecks = DeviceManager().enumerate()

@@ -3,4 +3,4 @@ set python_script_path=C:\Users\lpwhs\OneDrive\Desktop\Repos\streamdeck-media-up
 set output=C:\Users\lpwhs\OneDrive\Desktop\Repos\streamdeck-media-updater\runMediaUpdater.log
 
 REM Run the python script
-START /B "" py %python_script_path%
+START /B "" python %python_script_path%

@@ -5,6 +5,7 @@ import io
 import time
 import asyncio
 import traceback
+import os
 
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
@@ -38,31 +39,38 @@ async def get_media_info():
         # converts winrt vector to list
         info_dict['genres'] = list(info_dict['genres'])
 
-        print("Title: " + info_dict['title'])
-
-        # Copy the thumbnail image from the stream reference that is provided by the API
         thumb_stream_ref = info_dict['thumbnail']
-        thumb_read_buffer = Buffer(5000000)
-        readable_stream = await thumb_stream_ref.open_read_async()
-        readable_stream.read_async(thumb_read_buffer, thumb_read_buffer.capacity, InputStreamOptions.READ_AHEAD)
-        img = Image.new('RGB', (120, 120), color='black')
-        released_icon_from_buffer = Image.open(io.BytesIO(bytearray(thumb_read_buffer))).resize((120, 120))
-        img.paste(released_icon_from_buffer, (0, 0))
-        img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='JPEG')
-        img_released_bytes = img_byte_arr.getvalue()
-        info_dict['thumbnailBytes'] = img_released_bytes
+
+        try:
+            # Copy the thumbnail image from the stream reference that is provided by the API
+            thumb_read_buffer = Buffer(5000000)
+            readable_stream = await thumb_stream_ref.open_read_async()
+            await readable_stream.read_async(thumb_read_buffer, thumb_read_buffer.capacity, InputStreamOptions.READ_AHEAD)
+            img = Image.new('RGB', (120, 120), color='black')
+            released_icon_from_buffer = Image.open(io.BytesIO(bytearray(thumb_read_buffer))).resize((120, 120))
+            img.paste(released_icon_from_buffer, (0, 0))
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='JPEG')
+            img_released_bytes = img_byte_arr.getvalue()
+            info_dict['thumbnailBytes'] = img_released_bytes
+            del readable_stream
+            del thumb_read_buffer
+            del img
+        except:
+            #traceback.print_exc()
+            info_dict['thumbnailBytes'] = None
 
         # Deallocate all objects to avoid memory leaks
         del sessions
         del current_session
         del info
-
+        del thumb_stream_ref
+        
         return info_dict
 
     info_dict = {}
-    info_dict['title'] = ""
-    info_dict['thumbnailBytes'] = None
+    info_dict['title'] = "---"
+    info_dict['thumbnailBytes'] = "No Image"
 
     # Deallocate all objects to avoid memory leaks
     del sessions
@@ -76,6 +84,7 @@ def get_current_media_info():
         current_media_info = asyncio.run(get_media_info())
         return current_media_info
     except:
+        traceback.print_exc()
         current_media_info = {}
         current_media_info['title'] = ""
         return current_media_info
@@ -84,11 +93,12 @@ def updateCurrentlyPlaying(deck, current_media_info):
     '''Updates the currently playing media info on the Stream Deck Touchscreen'''
     title = current_media_info['title']
     if title == None or title == "":
+        print("Not updating... title is empty")
+        print(current_media_info)
         return
 
     with deck:
         try:
-            print("Updating currently playing media")
             img = Image.new('RGB', (600, 100), 'black')
             
             # Strip any non-ASCII characters
@@ -116,7 +126,9 @@ def updateCurrentlyPlaying(deck, current_media_info):
             img.save(img_bytes, format='JPEG')
             touchscreen_image_bytes = img_bytes.getvalue()
 
-            deck.set_touchscreen_image(touchscreen_image_bytes, 200,0,600,100)            
+            deck.set_touchscreen_image(touchscreen_image_bytes, 200,0,600,100) 
+            print("Setting deck to: " + title) 
+
         except:
             print ("Error updating currently playing media")
             traceback.print_exc()
@@ -130,8 +142,11 @@ def updateAlbumArt(deck, media_info):
     if image == None:
         return
 
+    if image == "No Image":
+        blankAlbumArt(deck)
+        return
+
     with deck:
-        print("Updating album art")
         try:
             deck.set_key_image(ALBUM_ART_KEY_NUMBER, image)
             print("Album art updated")
@@ -141,7 +156,7 @@ def updateAlbumArt(deck, media_info):
             img_byte_arr = io.BytesIO()
             img.save(img_byte_arr, format='JPEG')
             img_released_bytes = img_byte_arr.getvalue()
-            #deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
+            deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
             print("Album art not updated")
         
 def hashAlbumArt(media_info):
@@ -160,33 +175,65 @@ def hashAlbumArt(media_info):
 
 def key_change_callback(deck, key, key_state):
     '''Callback for when a key is pressed or released'''
-    print("Key {} has been {}".format(key, "pressed" if key_state else "released"))
     if key == REFRESH_BUTTON_KEY_NUMBER and key_state:
         current_media_info = get_current_media_info()
         updateCurrentlyPlaying(deck, current_media_info)
+        blankAlbumArt(deck)
         updateAlbumArt(deck, current_media_info)
+
+    if key == ALBUM_ART_KEY_NUMBER and key_state:
+        current_media_info = get_current_media_info()
+        title = current_media_info['title']
+        artist = current_media_info['artist']
+        album = current_media_info['album_title']
+        recordFavorite(title, artist, album)
         
-        # Deallocate all objects to avoid memory leaks
-        del current_media_info
+
+def recordFavorite(title, artist, album):
+    favoriteLine = "\"" + title + "\",\"" + artist + "\",\"" + album + "\"\n"
+    print("FAVORITE: " + favoriteLine)
+    # Check if a favorites.csv file exists, if not create one and write the header line
+    if not os.path.isfile("favorites.csv"):
+        file = open("favorites.csv", "w")
+        file.write("Title,Artist,Album\n")
+        file.close()
+
+    # Check if the last line of the csv is the favorite
+    file = open("favorites.csv", "r")
+    lines = file.readlines()
+    file.close()
+    if len(lines) > 1:
+        lastLine = lines[-1]
+        if lastLine == favoriteLine:
+            return
+
+    file = open("favorites.csv", "a")
+    file.write(favoriteLine)
+    file.close()
+
+def blankAlbumArt(deck):
+    with deck:
+        img = Image.new('RGB', (120, 120), color='black')
+        img_byte_arr = io.BytesIO()
+        img.save(img_byte_arr, format='JPEG')
+        img_released_bytes = img_byte_arr.getvalue()
+        deck.set_key_image(ALBUM_ART_KEY_NUMBER, img_released_bytes)
 
 def runUpdaterTask(deck):
     previousTitle = ""
     previousMediaHash = None
     while True:
-        time.sleep(0.250)
+        time.sleep(0.500)
         current_media_info = get_current_media_info()
-
         currentTitle = current_media_info["title"]
-        if previousTitle != currentTitle and currentTitle != None:
-            print("title changed")
-            print("Current: " + currentTitle)
-            print("Previous: " + previousTitle)
-            updateCurrentlyPlaying(deck, current_media_info)      
+        if previousTitle != currentTitle and currentTitle != None and currentTitle != "":
+            updateCurrentlyPlaying(deck, current_media_info) 
+            blankAlbumArt(deck)
+            previousMediaHash = None     
             previousTitle = currentTitle
         
         currentMediaHash = hashAlbumArt(current_media_info)
         if previousMediaHash != currentMediaHash and currentMediaHash != None:
-             print("hash changed")
              updateAlbumArt(deck, current_media_info)
              previousMediaHash = currentMediaHash
                 

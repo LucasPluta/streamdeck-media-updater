@@ -15,3 +15,6 @@ This is a quick-and-dirty solution to that problem.
 ### Usage:
 - Ensure you have the necessary dependencies installed.  See the [comments](./getMediaInfo.py)
 - Launch the script [start-media-update.bat](start-media-update.bat), either manually, or during Windows start up.  
+
+### Testing
+This has been tested and confirmed to work on Windows 10. If you're on Windows 11, you might need to roll up your sleeves a bit to get it going.

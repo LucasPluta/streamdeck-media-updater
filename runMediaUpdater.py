@@ -22,6 +22,10 @@ from winsdk.windows.storage.streams import DataReader, Buffer, InputStreamOption
 # Also requires this: https://python-elgato-streamdeck.readthedocs.io/en/stable/pages/backend_libusb_hidapi.html#windows
 
 ALBUM_ART_KEY_NUMBER = 6
+
+
+# Occassionally, the WinRT API will not return the current media info when polled, and the Stream Deck will de-sync.
+# This button allows you to manually refresh the media info on the Stream Deck when this happens.
 REFRESH_BUTTON_KEY_NUMBER = 5
 
 async def get_media_info():
@@ -98,26 +102,31 @@ def updateCurrentlyPlaying(deck, current_media_info):
         return
 
     with deck:
-        try:
-            img = Image.new('RGB', (600, 100), 'black')
-            
-            # Strip any non-ASCII characters
+        try:   
             title = ''.join([i if ord(i) < 128 else '' for i in title])
-            # Trim the whitespace from beginning and end
-            title = title.strip()
-            # split long titles into multiple lines, perferably at a space
-            
+            title = title.strip()  
             if len(title) > 65:
                 title = title[:65] + '\n' + title[65:]
-            text = title
-            
-            # Check if current_media_info has an "artist"
+                
+            artist = ""
             if 'artist' in current_media_info:
-                text += "\n" + current_media_info['artist']
-            # Check if current_media_info has an "album"
+                artist += current_media_info['artist']
+                artist = ''.join([i if ord(i) < 128 else '' for i in artist])
+                artist = artist.strip()
+            if len(artist) > 65:
+                artist = artist[:65] + '\n' + artist[65:]
+                
+            albumTitle = ""
             if 'album_title' in current_media_info:
-                text += "\n" + current_media_info['album_title']
+                albumTitle += current_media_info['album_title']
+                albumTitle = ''.join([i if ord(i) < 128 else '' for i in albumTitle])
+                albumTitle = albumTitle.strip()
+            if len(albumTitle) > 65:
+                albumTitle = albumTitle[:65] + '\n' + albumTitle[65:]
+            
+            text = title + "\n" + artist + "\n" + albumTitle
 
+            img = Image.new('RGB', (600, 100), 'black')
             draw = ImageDraw.Draw(img)
             font = ImageFont.truetype("C:\\WINDOWS\\FONTS\\ARIALBD.ttf", 18)
             draw.text((img.width / 1.6, 15), font=font, text=text,  anchor="ms", fill="white")
@@ -226,6 +235,11 @@ def runUpdaterTask(deck):
         time.sleep(0.500)
         current_media_info = get_current_media_info()
         currentTitle = current_media_info["title"]
+        if "artist" in current_media_info:
+            currentTitle += current_media_info["artist"]
+        if "album_title" in current_media_info:
+            currentTitle += current_media_info["album_title"]
+            
         if previousTitle != currentTitle and currentTitle != None and currentTitle != "":
             updateCurrentlyPlaying(deck, current_media_info) 
             blankAlbumArt(deck)
